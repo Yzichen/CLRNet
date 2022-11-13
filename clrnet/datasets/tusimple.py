@@ -11,8 +11,7 @@ import logging
 import random
 
 SPLIT_FILES = {
-    'trainval':
-    ['label_data_0313.json', 'label_data_0601.json', 'label_data_0531.json'],
+    'trainval': ['label_data_0313.json', 'label_data_0601.json', 'label_data_0531.json'],
     'train': ['label_data_0313.json', 'label_data_0601.json'],
     'val': ['label_data_0531.json'],
     'test': ['test_label.json'],
@@ -37,10 +36,11 @@ class TuSimple(BaseDataset):
                 lines = anno_obj.readlines()
             for line in lines:
                 data = json.loads(line)
-                y_samples = data['h_samples']
-                gt_lanes = data['lanes']
+                y_samples = data['h_samples']   # [y0, y1, ...]
+                gt_lanes = data['lanes']        # [[x_00, x_01, ...], [x_10, x_11, ...], ...]
                 mask_path = data['raw_file'].replace('clips',
                                                      'seg_label')[:-3] + 'png'
+                # lanes: [[(x_00,y0), (x_01,y1), ...], [(x_10,y0), (x_11,y1), ...], ...]
                 lanes = [[(x, y) for (x, y) in zip(lane, y_samples) if x >= 0]
                          for lane in gt_lanes]
                 lanes = [lane for lane in lanes if len(lane) > 0]

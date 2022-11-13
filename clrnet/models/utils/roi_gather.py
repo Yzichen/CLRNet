@@ -45,6 +45,7 @@ class ROIGather(nn.Module):
                                 kernel_size=1,
                                 stride=1,
                                 padding=0,
+                                conv_cfg=dict(type='Conv2d'),
                                 norm_cfg=dict(type='BN'))
 
         self.f_query = nn.Sequential(
@@ -94,43 +95,64 @@ class ROIGather(nn.Module):
         self.fc_norm = nn.LayerNorm(fc_hidden_dim)
 
     def roi_fea(self, x, layer_index):
+        """
+        Args:
+            x: List [(B*num_priors, C, N_sample, 1),  ...]   len=(layer_index+1)
+            layer_index: int
+        Returns:
+
+        """
         feats = []
         for i, feature in enumerate(x):
+            # feat_trans: (B*num_priors, C, N_sample, 1) --> (B*num_priors, C_mid, N_sample, 1)
             feat_trans = self.convs[i](feature)
             feats.append(feat_trans)
+
+        # (B*num_priors, C_mid*(layer_index+1), N_sample, 1)
         cat_feat = torch.cat(feats, dim=1)
+        # (B*num_priors, C_mid*(layer_index+1), N_sample, 1) --> (B*num_priors, C, N_sample, 1)
         cat_feat = self.catconv[layer_index](cat_feat)
         return cat_feat
 
     def forward(self, roi_features, x, layer_index):
         '''
         Args:
-            roi_features: prior feature, shape: (Batch * num_priors, prior_feat_channel, sample_point, 1)
-            x: feature map
+            roi_features: prior feature, List [(B*num_priors, C, N_sample, 1),  ...]
+            x: feature map  (B, C, fH, fW)
             layer_index: currently on which layer to refine
         Return: 
-            roi: prior features with gathered global information, shape: (Batch, num_priors, fc_hidden_dim)
+            roi: prior features with gathered global information, shape: (B, num_priors, C)
         '''
-        roi = self.roi_fea(roi_features, layer_index)
+        roi = self.roi_fea(roi_features, layer_index)   # (B*num_priors, C, N_sample, 1)
         bs = x.size(0)
-        roi = roi.contiguous().view(bs * self.num_priors, -1)
-
+        roi = roi.contiguous().view(bs * self.num_priors, -1)   # (B*num_priors, C*N_sample)
+        # (B*num_priors, C*N_sample) --> (B*num_priors, C)
         roi = F.relu(self.fc_norm(self.fc(roi)))
+        # (B*num_priors, C) --> (B, num_priors, C)
         roi = roi.view(bs, self.num_priors, -1)
-        query = roi
 
-        value = self.resize(self.f_value(x))
+        query = roi     # (B, num_priors, C)
+        # (B, num_priors, C) --> (B, num_priors, C)
         query = self.f_query(query)
-        key = self.f_key(x)
+        # (B, C, fH, fW) --> (B, C, fH, fW) --> (B, C, 10*25)
+        value = self.resize(self.f_value(x))
+        # (B, C, fH, fW) --> (B, C, fH, fW) --> (B, C, 10*25)
+        key = self.resize(self.f_key(x))
+
+        # (B, C, 10*25) --> (B, 10*25, C)
         value = value.permute(0, 2, 1)
-        key = self.resize(key)
+
+        # (B, num_priors, C) @ (B, C, 10*25) --> (B, num_priors, 10*25)
         sim_map = torch.matmul(query, key)
         sim_map = (self.in_channels**-.5) * sim_map
         sim_map = F.softmax(sim_map, dim=-1)
 
+        # (B, num_priors, 10*25) @ (B, 10*25, C) --> (B, num_priors, C)
         context = torch.matmul(sim_map, value)
+        # (B, num_priors, C) --> (B, num_priors, C)
         context = self.W(context)
 
+        # (B, num_priors, C) + (B, num_priors, C) --> (B, num_priors, C)
         roi = roi + F.dropout(context, p=0.1, training=self.training)
 
         return roi

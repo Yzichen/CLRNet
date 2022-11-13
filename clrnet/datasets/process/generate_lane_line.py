@@ -106,7 +106,7 @@ class GenerateLaneLine(object):
     def transform_annotation(self, anno, img_wh=None):
         img_w, img_h = self.img_w, self.img_h
 
-        old_lanes = anno['lanes']
+        old_lanes = anno['lanes']   # old_lanes: [[(x_00,y0), (x_01,y1), ...], [(x_10,y0), (x_11,y1), ...], ...]
 
         # removing lanes with less than 2 points
         old_lanes = filter(lambda x: len(x) > 1, old_lanes)
@@ -118,11 +118,11 @@ class GenerateLaneLine(object):
         old_lanes = [[[
             x * self.img_w / float(img_w), y * self.img_h / float(img_h)
         ] for x, y in lane] for lane in old_lanes]
-        # create tranformed annotations
+        # create tranformed annotations     (max_lanes, 6+S)
         lanes = np.ones(
             (self.max_lanes, 2 + 1 + 1 + 2 + self.n_offsets), dtype=np.float32
-        ) * -1e5  # 2 scores, 1 start_y, 1 start_x, 1 theta, 1 length, S+1 coordinates
-        lanes_endpoints = np.ones((self.max_lanes, 2))
+        ) * -1e5  # 2 scores, 1 start_y, 1 start_x, 1 theta, 1 length, S coordinates
+        lanes_endpoints = np.ones((self.max_lanes, 2))      # (max_lanes, 2)
         # lanes are invalid by default
         lanes[:, 0] = 1
         lanes[:, 1] = 0
@@ -140,8 +140,8 @@ class GenerateLaneLine(object):
             all_xs = np.hstack((xs_outside_image, xs_inside_image))
             lanes[lane_idx, 0] = 0
             lanes[lane_idx, 1] = 1
-            lanes[lane_idx, 2] = len(xs_outside_image) / self.n_strips
-            lanes[lane_idx, 3] = xs_inside_image[0]
+            lanes[lane_idx, 2] = len(xs_outside_image) / self.n_strips       # normalized start_y
+            lanes[lane_idx, 3] = xs_inside_image[0]     # img_w 尺度下的 start_x
 
             thetas = []
             for i in range(1, len(xs_inside_image)):
@@ -156,15 +156,16 @@ class GenerateLaneLine(object):
             # lanes[lane_idx,
             #       4] = (theta_closest + theta_far) / 2  # averaged angle
             lanes[lane_idx, 4] = theta_far
-            lanes[lane_idx, 5] = len(xs_inside_image)
-            lanes[lane_idx, 6:6 + len(all_xs)] = all_xs
+            lanes[lane_idx, 5] = len(xs_inside_image)   # length
+            lanes[lane_idx, 6:6 + len(all_xs)] = all_xs     # img_w 尺度下的 xs
+
             lanes_endpoints[lane_idx, 0] = (len(all_xs) - 1) / self.n_strips
             lanes_endpoints[lane_idx, 1] = xs_inside_image[-1]
 
         new_anno = {
-            'label': lanes,
+            'label': lanes,    # (max_lanes, 6+S)
             'old_anno': anno,
-            'lane_endpoints': lanes_endpoints
+            'lane_endpoints': lanes_endpoints    # (max_lanes, 2)
         }
         return new_anno
 
@@ -193,7 +194,22 @@ class GenerateLaneLine(object):
                 img, line_strings = self.transform(
                     image=img_org.copy().astype(np.uint8),
                     line_strings=line_strings_org)
+
+            # print(img.shape)
+            # print("!!!")
+            # for line in line_strings:
+            #     coords = line.coords
+            #     print(coords[(coords[:, 0] >= 800)])
+            #     print(coords[coords[:, 1] >= 320])
+            # print("!!!")
             line_strings.clip_out_of_image_()
+            # print("###")
+            # for line in line_strings:
+            #     coords = line.coords
+            #     print(coords[(coords[:, 0] >= 800)])
+            #     print(coords[coords[:, 1] >= 320])
+            # print("###")
+
             new_anno = {'lanes': self.linestrings_to_lanes(line_strings)}
             try:
                 annos = self.transform_annotation(new_anno,

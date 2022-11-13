@@ -1,6 +1,7 @@
 from clrnet.utils import Registry, build_from_cfg
 
 import torch
+import torch.nn as nn
 from functools import partial
 import numpy as np
 import random

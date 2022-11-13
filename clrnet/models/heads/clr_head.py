@@ -54,6 +54,8 @@ class CLRHead(nn.Module):
         self.prior_feat_channels = prior_feat_channels
 
         self._init_prior_embeddings()
+        # priors: (num_priors, 6 + S)
+        # priors_on_featmap: (num_priors, N_sample)
         init_priors, priors_on_featmap = self.generate_priors_from_embeddings() #None, None
         self.register_buffer(name='priors', tensor=init_priors)
         self.register_buffer(name='priors_on_featmap', tensor=priors_on_featmap)
@@ -102,34 +104,53 @@ class CLRHead(nn.Module):
         '''
         pool prior feature from feature map.
         Args:
-            batch_features (Tensor): Input feature maps, shape: (B, C, H, W) 
+            batch_features (Tensor): Input feature maps, shape: (B, C, H, W)
+            num_priors: int
+            prior_xs: (B, num_priors, N_sample)
+        Returns:
+            feature: (B*num_priors, C, N_sample, 1)
         '''
 
         batch_size = batch_features.shape[0]
 
+        # (B, num_priors, N_sample， 1)
         prior_xs = prior_xs.view(batch_size, num_priors, -1, 1)
+        # (N_sample, ) --> (B*N_sample*num_priors, ) --> (B, num_priors, N_sample, 1)
         prior_ys = self.prior_feat_ys.repeat(batch_size * num_priors).view(
             batch_size, num_priors, -1, 1)
 
+        # (0, 1) --> (-1, 1)
         prior_xs = prior_xs * 2. - 1.
         prior_ys = prior_ys * 2. - 1.
-        grid = torch.cat((prior_xs, prior_ys), dim=-1)
+        grid = torch.cat((prior_xs, prior_ys), dim=-1)      # (B, num_priors, N_sample, 2)
+        # (B, C, num_priors, N_sample) --> (B, num_priors, C, N_sample)
         feature = F.grid_sample(batch_features, grid,
                                 align_corners=True).permute(0, 2, 1, 3)
 
+        # (B*num_priors, C, N_sample, 1)
         feature = feature.reshape(batch_size * num_priors,
                                   self.prior_feat_channels, self.sample_points,
                                   1)
+
         return feature
 
     def generate_priors_from_embeddings(self):
-        predictions = self.prior_embeddings.weight  # (num_prop, 3)
+        """
+        Returns:
+            priors: (num_priors, 6+S)
+            priors_on_featmap: (num_priors, N_sample)
+        """
+        predictions = self.prior_embeddings.weight  # (num_priors, 3)
 
-        # 2 scores, 1 start_y, 1 start_x, 1 theta, 1 length, 72 coordinates, score[0] = negative prob, score[1] = positive prob
+        # 2 scores, 1 start_y, 1 start_x, 1 theta, 1 length, 72 coordinates,
+        # score[0] = negative prob, score[1] = positive prob
+        # (num_priors, 6+S)
         priors = predictions.new_zeros(
             (self.num_priors, 2 + 2 + 2 + self.n_offsets), device=predictions.device)
 
-        priors[:, 2:5] = predictions.clone()
+        priors[:, 2:5] = predictions.clone()    # 1 start_y, 1 start_x, 1 theta
+        # self.prior_ys: [1, ..., 0]  len=S   从底向上排列
+        # start_x + ((1 - prior_y) - start_y) / tan(theta)     normalized x coords   按照图像底部-->顶部排列.
         priors[:, 6:] = (
             priors[:, 3].unsqueeze(1).clone().repeat(1, self.n_offsets) *
             (self.img_w - 1) +
@@ -139,6 +160,7 @@ class CLRHead(nn.Module):
                  1, self.n_offsets) * math.pi + 1e-5))) / (self.img_w - 1)
 
         # init priors on feature map
+        # (num_priors, N_sample)
         priors_on_featmap = priors.clone()[..., 6 + self.sample_x_indexs]
 
         return priors, priors_on_featmap
@@ -184,17 +206,30 @@ class CLRHead(nn.Module):
         Each feature is a 4D tensor.
         Args:
             x: input features (list[Tensor])
+            kwargs:
+                dict {
+                    'img': (B, 3, img_H, img_W),
+                    'lane_line': (B, max_lanes, 6+S),  2 scores, 1 start_y, 1 start_x, 1 theta, 1 length, S coordinates
+                    'seg': (B, img_H, img_W),
+                    'meta': List[dict0, dict1, ...]
+                }
         Return:
             prediction_list: each layer's prediction result
             seg: segmentation result for auxiliary loss
         '''
         batch_features = list(x[len(x) - self.refine_layers:])
-        batch_features.reverse()
-        batch_size = batch_features[-1].shape[0]
+        # high level --> low level
+        batch_features.reverse()    # List[(B, C, H5, W5), (B, C, H4, W4), (B, C, H3, W3)]
+        batch_size = batch_features[-1].shape[0]    # batch_size
 
         if self.training:
+            # 由于priors是可学习的，因此训练过程中一直在变化.
+            # priors: (num_priors, 6+S)
+            # priors_on_featmap: (num_priors, N_sample)
             self.priors, self.priors_on_featmap = self.generate_priors_from_embeddings()
 
+        # priors: (B, num_priors, 6+S)  2 scores, 1 start_y, 1 start_x, 1 theta, 1 length, 72 coordinates,
+        # priors_on_featmap: (B, num_priors, N_sample)
         priors, priors_on_featmap = self.priors.repeat(batch_size, 1,
                                                   1), self.priors_on_featmap.repeat(
                                                       batch_size, 1, 1)
@@ -205,15 +240,16 @@ class CLRHead(nn.Module):
         prior_features_stages = []
         for stage in range(self.refine_layers):
             num_priors = priors_on_featmap.shape[1]
-            prior_xs = torch.flip(priors_on_featmap, dims=[2])
+            prior_xs = torch.flip(priors_on_featmap, dims=[2])      # 图像顶部-->底部
 
             batch_prior_features = self.pool_prior_features(
-                batch_features[stage], num_priors, prior_xs)
+                batch_features[stage], num_priors, prior_xs)    # (B*num_priors, C, N_sample, 1)
             prior_features_stages.append(batch_prior_features)
 
             fc_features = self.roi_gather(prior_features_stages,
-                                          batch_features[stage], stage)
+                                          batch_features[stage], stage)     # (B, num_priors, C)
 
+            # (B*num_priors, C)
             fc_features = fc_features.view(num_priors, batch_size,
                                            -1).reshape(batch_size * num_priors,
                                                        self.fc_hidden_dim)
@@ -221,34 +257,42 @@ class CLRHead(nn.Module):
             cls_features = fc_features.clone()
             reg_features = fc_features.clone()
             for cls_layer in self.cls_modules:
+                # (B*num_priors, C)
                 cls_features = cls_layer(cls_features)
             for reg_layer in self.reg_modules:
+                # (B*num_priors, C)
                 reg_features = reg_layer(reg_features)
 
+            # (B*num_priors, C) --> (B*num_priors, 2)
             cls_logits = self.cls_layers(cls_features)
+            # (B*num_priors, C) --> (B*num_priors, 2+1+1+n_offsets)
             reg = self.reg_layers(reg_features)
 
             cls_logits = cls_logits.reshape(
                 batch_size, -1, cls_logits.shape[1])  # (B, num_priors, 2)
-            reg = reg.reshape(batch_size, -1, reg.shape[1])
+            reg = reg.reshape(batch_size, -1, reg.shape[1])    # (B, num_priors, 2+1+1+n_offsets)
 
-            predictions = priors.clone()
-            predictions[:, :, :2] = cls_logits
+            predictions = priors.clone()    # (B, num_priors, 6+S)
+            predictions[:, :, :2] = cls_logits  # (B*num_priors, 2)
 
+            # start_y, 1 start_x, 1 theta   (B, num_priors, 3)
             predictions[:, :,
                         2:5] += reg[:, :, :3]  # also reg theta angle here
-            predictions[:, :, 5] = reg[:, :, 3]  # length
+            predictions[:, :, 5] = reg[:, :, 3]  # length   (B, num_priors), 这似乎是一个normalized length.
 
             def tran_tensor(t):
                 return t.unsqueeze(2).clone().repeat(1, 1, self.n_offsets)
 
+            # (B, num_priors, S)
             predictions[..., 6:] = (
                 tran_tensor(predictions[..., 3]) * (self.img_w - 1) +
                 ((1 - self.prior_ys.repeat(batch_size, num_priors, 1) -
                   tran_tensor(predictions[..., 2])) * self.img_h /
                  torch.tan(tran_tensor(predictions[..., 4]) * math.pi + 1e-5))) / (self.img_w - 1)
 
-            prediction_lines = predictions.clone()
+            # 更新后的line priors(考虑start_x、start_y、theta和length的更新)，作为下一个layer的line prior.
+            prediction_lines = predictions.clone()      # (B, num_priors, 6+S)
+            # (B, num_priors, S)
             predictions[..., 6:] += reg[..., 4:]
 
             predictions_lists.append(predictions)
@@ -259,6 +303,7 @@ class CLRHead(nn.Module):
 
         if self.training:
             seg = None
+            # (B, refine_layers*C, H3, W3)
             seg_features = torch.cat([
                 F.interpolate(feature,
                               size=[
@@ -268,10 +313,13 @@ class CLRHead(nn.Module):
                               mode='bilinear',
                               align_corners=False)
                 for feature in batch_features
-            ],
-                                     dim=1)
+            ], dim=1)
+            # (B, refine_layers*C, H3, W3)  --> (B, num_class, img_H, img_W)
             seg = self.seg_decoder(seg_features)
-            output = {'predictions_lists': predictions_lists, 'seg': seg}
+            output = {
+                'predictions_lists': predictions_lists,     # List[(B, num_priors, 6+S), (B, num_priors, 6+S), (B, num_priors, 6+S)]
+                'seg': seg      # (B, num_class, img_H, img_W)
+            }
             return self.loss(output, kwargs['batch'])
 
         return predictions_lists[-1]
@@ -279,6 +327,10 @@ class CLRHead(nn.Module):
     def predictions_to_pred(self, predictions):
         '''
         Convert predictions to internal Lane structure for evaluation.
+        Args:
+            predictions: (num_priors, 6+S)
+                6+S: 2 scores, 1 start_y(normalized), 1 start_x(normalized), 1 theta(normalized), 1 length(absolute), S coordinates(normalized)
+
         '''
         self.prior_ys = self.prior_ys.to(predictions.device)
         self.prior_ys = self.prior_ys.double()
@@ -297,10 +349,10 @@ class CLRHead(nn.Module):
                        ).cpu().numpy()[::-1].cumprod()[::-1]).astype(np.bool))
             lane_xs[end + 1:] = -2
             lane_xs[:start][mask] = -2
-            lane_ys = self.prior_ys[lane_xs >= 0]
-            lane_xs = lane_xs[lane_xs >= 0]
-            lane_xs = lane_xs.flip(0).double()
-            lane_ys = lane_ys.flip(0)
+            lane_ys = self.prior_ys[lane_xs >= 0]   # (N_valid, )   由底向上
+            lane_xs = lane_xs[lane_xs >= 0]         # (N_valid, )
+            lane_xs = lane_xs.flip(0).double()      # (N_valid, )   由上向底
+            lane_ys = lane_ys.flip(0)               # (N_valid, )   由上向底
 
             lane_ys = (lane_ys * (self.cfg.ori_img_h - self.cfg.cut_height) +
                        self.cfg.cut_height) / self.cfg.ori_img_h
@@ -308,7 +360,7 @@ class CLRHead(nn.Module):
                 continue
             points = torch.stack(
                 (lane_xs.reshape(-1, 1), lane_ys.reshape(-1, 1)),
-                dim=1).squeeze(2)
+                dim=1).squeeze(2)      # (N_valid, 2)
             lane = Lane(points=points.cpu().numpy(),
                         metadata={
                             'start_x': lane[3],
@@ -325,6 +377,28 @@ class CLRHead(nn.Module):
              xyt_loss_weight=0.5,
              iou_loss_weight=2.,
              seg_loss_weight=1.):
+        """
+        Args:
+            output:
+                dict = {
+                    'predictions_lists': predictions_lists,     # List[(B, num_priors, 6+S), (B, num_priors, 6+S), (B, num_priors, 6+S)]
+                        6+S: 2 scores, 1 start_y(normalized), 1 start_x(normalized), 1 theta, 1 length(normalized), 72 coordinates(normalized),
+                    'seg': seg      # (B, num_class, img_H, img_W)
+                }
+            batch:
+                dict {
+                    'img': (B, 3, img_H, img_W),
+                    'lane_line': (B, max_lanes, 6+S),  2 scores, 1 start_y (normalized), 1 start_x (absolute), 1 theta, 1 length (absolute), S coordinates(absolute)
+                    'seg': (B, img_H, img_W),
+                    'meta': List[dict0, dict1, ...]
+                }
+            cls_loss_weight:
+            xyt_loss_weight:
+            iou_loss_weight:
+            seg_loss_weight:
+        Returns:
+
+        """
         if self.cfg.haskey('cls_loss_weight'):
             cls_loss_weight = self.cfg.cls_loss_weight
         if self.cfg.haskey('xyt_loss_weight'):
@@ -334,8 +408,8 @@ class CLRHead(nn.Module):
         if self.cfg.haskey('seg_loss_weight'):
             seg_loss_weight = self.cfg.seg_loss_weight
 
-        predictions_lists = output['predictions_lists']
-        targets = batch['lane_line'].clone()
+        predictions_lists = output['predictions_lists']     # List[(B, num_priors, 6+S), (B, num_priors, 6+S), (B, num_priors, 6+S)]
+        targets = batch['lane_line'].clone()    # (B, max_lanes, 6+S)
         cls_criterion = FocalLoss(alpha=0.25, gamma=2.)
         cls_loss = 0
         reg_xytl_loss = 0
@@ -344,9 +418,11 @@ class CLRHead(nn.Module):
 
         cls_acc_stage = []
         for stage in range(self.refine_layers):
-            predictions_list = predictions_lists[stage]
+            predictions_list = predictions_lists[stage]     # (B, num_priors, 6+S)
             for predictions, target in zip(predictions_list, targets):
-                target = target[target[:, 1] == 1]
+                # predictions: (num_priors, 6+S)
+                # target: (max_lanes, 6+S)
+                target = target[target[:, 1] == 1]      # (num_targets, 6+S)
 
                 if len(target) == 0:
                     # If there are no targets, all predictions have to be negatives (i.e., 0 confidence)
@@ -357,27 +433,30 @@ class CLRHead(nn.Module):
                     continue
 
                 with torch.no_grad():
+                    # matched_row_inds (Tensor): the index of assigned priors.     # (N_pos, )
+                    # matched_col_inds (Tensor): the corresponding ground truth index.   # (N_pos, )
                     matched_row_inds, matched_col_inds = assign(
                         predictions, target, self.img_w, self.img_h)
 
                 # classification targets
-                cls_target = predictions.new_zeros(predictions.shape[0]).long()
+                cls_target = predictions.new_zeros(predictions.shape[0]).long()     # (num_priors, )
                 cls_target[matched_row_inds] = 1
-                cls_pred = predictions[:, :2]
+                cls_pred = predictions[:, :2]       # (num_priors, 2)
 
-                # regression targets -> [start_y, start_x, theta] (all transformed to absolute values), only on matched pairs
-                reg_yxtl = predictions[matched_row_inds, 2:6]
+                # regression targets -> [start_y, start_x, theta, length] (all transformed to absolute values),
+                # only on matched pairs
+                reg_yxtl = predictions[matched_row_inds, 2:6]       # (N_pos, 4)
                 reg_yxtl[:, 0] *= self.n_strips
                 reg_yxtl[:, 1] *= (self.img_w - 1)
                 reg_yxtl[:, 2] *= 180
                 reg_yxtl[:, 3] *= self.n_strips
 
-                target_yxtl = target[matched_col_inds, 2:6].clone()
+                target_yxtl = target[matched_col_inds, 2:6].clone()     # (N_pos, 4)
 
                 # regression targets -> S coordinates (all transformed to absolute values)
-                reg_pred = predictions[matched_row_inds, 6:]
+                reg_pred = predictions[matched_row_inds, 6:]    # (N_pos, S)
                 reg_pred *= (self.img_w - 1)
-                reg_targets = target[matched_col_inds, 6:].clone()
+                reg_targets = target[matched_col_inds, 6:].clone()      # (N_pos, S)
 
                 with torch.no_grad():
                     predictions_starts = torch.clamp(
@@ -390,6 +469,7 @@ class CLRHead(nn.Module):
                                            )  # reg length
 
                 # Loss calculation
+                # Question: 使用的是Focal Loss, 那除以的应该是正样本的数量.
                 cls_loss = cls_loss + cls_criterion(cls_pred, cls_target).sum(
                 ) / target.shape[0]
 
@@ -436,10 +516,12 @@ class CLRHead(nn.Module):
 
         return return_value
 
-
     def get_lanes(self, output, as_lanes=True):
         '''
         Convert model output to lanes.
+        Args:
+            output: (B, num_priors, 6+S)
+                6+S: 2 scores, 1 start_y(normalized), 1 start_x(normalized), 1 theta(normalized), 1 length(normalized), S coordinates(normalized)
         '''
         softmax = nn.Softmax(dim=1)
 
@@ -455,10 +537,14 @@ class CLRHead(nn.Module):
             if predictions.shape[0] == 0:
                 decoded.append([])
                 continue
+
             nms_predictions = predictions.detach().clone()
+            # (num_pred, 5+S)   2 scores, 1 start_y(normalized), 1 start_x(normalized), 1 length(normalized), S coordinates(normalized)
             nms_predictions = torch.cat(
                 [nms_predictions[..., :4], nms_predictions[..., 5:]], dim=-1)
+            # normalized length --> absolute length
             nms_predictions[..., 4] = nms_predictions[..., 4] * self.n_strips
+            # normalized x_coords --> absolute x_coords
             nms_predictions[...,
                             5:] = nms_predictions[..., 5:] * (self.img_w - 1)
 
@@ -467,13 +553,14 @@ class CLRHead(nn.Module):
                 scores,
                 overlap=self.cfg.test_parameters.nms_thres,
                 top_k=self.cfg.max_lanes)
-            keep = keep[:num_to_keep]
-            predictions = predictions[keep]
+            keep = keep[:num_to_keep]       # (N_keep, )
+            predictions = predictions[keep]     # (N_keep, 6+S)
 
             if predictions.shape[0] == 0:
                 decoded.append([])
                 continue
 
+            # normalized length --> absolute length
             predictions[:, 5] = torch.round(predictions[:, 5] * self.n_strips)
             if as_lanes:
                 pred = self.predictions_to_pred(predictions)

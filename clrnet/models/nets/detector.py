@@ -15,17 +15,19 @@ class Detector(nn.Module):
         self.neck = build_necks(cfg) if cfg.haskey('neck') else None
         self.heads = build_heads(cfg)
     
-    def get_lanes(self):
+    def get_lanes(self, output):
         return self.heads.get_lanes(output)
 
     def forward(self, batch):
         output = {}
+        # fea: List[(B, C2, H2, W2), (B, C3, H3, W3), (B, C4, H4, W4), (B, C5, H5, W5)]
         fea = self.backbone(batch['img'] if isinstance(batch, dict) else batch)
 
         if self.aggregator:
             fea[-1] = self.aggregator(fea[-1])
 
         if self.neck:
+            # fea: List[(B, C=64, H3, W3), (B, C=64, H4, W4), (B, C=64, H5, W5)]
             fea = self.neck(fea)
 
         if self.training:

@@ -38,7 +38,9 @@ def gen_label_for_json(args, image_set):
                     _lanes.append(l)
                     slope.append(
                         np.arctan2(l[-1][1] - l[0][1], l[0][0] - l[-1][0]) /
-                        np.pi * 180)
+                        np.pi * 180)    # theta = arctan2(delta_y, delta_x)
+
+            # 按照slope从小到大排列
             _lanes = [_lanes[i] for i in np.argsort(slope)]
             slope = [slope[i] for i in np.argsort(slope)]
 
@@ -55,7 +57,6 @@ def gen_label_for_json(args, image_set):
                     break
             for i in range(6):
                 lanes.append([] if idx[i] is None else _lanes[idx[i]])
-
             # ---------------------------------------------
 
             img_path = label['raw_file']

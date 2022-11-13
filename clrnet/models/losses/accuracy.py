@@ -37,15 +37,15 @@ def accuracy(pred, target, topk=1, thresh=None):
     assert pred.size(0) == target.size(0)
     assert maxk <= pred.size(1), \
         f'maxk {maxk} exceeds pred dimension {pred.size(1)}'
-    pred_value, pred_label = pred.topk(maxk, dim=1)
-    pred_label = pred_label.t()  # transpose to shape (maxk, N)
-    correct = pred_label.eq(target.view(1, -1).expand_as(pred_label))
+    pred_value, pred_label = pred.topk(maxk, dim=1)     # (N_pred, maxk)  (N_pred, maxk)
+    pred_label = pred_label.t()  # transpose to shape (maxk, N_pred)
+    correct = pred_label.eq(target.view(1, -1).expand_as(pred_label))   # (maxk, N_pred)
     if thresh is not None:
         # Only prediction values larger than thresh are counted as correct
-        correct = correct & (pred_value > thresh).t()
+        correct = correct & (pred_value > thresh).t()   # (maxk, N_pred)
     res = []
     for k in topk:
-        correct_k = correct[:k].reshape(-1).float().sum(0, keepdim=True)
+        correct_k = correct[:k].reshape(-1).float().sum(0, keepdim=True)    # (N_pred, ) --> (1, )
         res.append(correct_k.mul_(100.0 / pred.size(0)))
     return res[0] if return_single else res
 
