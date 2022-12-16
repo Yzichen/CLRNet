@@ -328,7 +328,7 @@ class CLRHead(nn.Module):
         '''
         Convert predictions to internal Lane structure for evaluation.
         Args:
-            predictions: (num_priors, 6+S)
+            predictions: (N_pred, 6+S)
                 6+S: 2 scores, 1 start_y(normalized), 1 start_x(normalized), 1 theta(normalized), 1 length(absolute), S coordinates(normalized)
 
         '''
@@ -399,6 +399,7 @@ class CLRHead(nn.Module):
         Returns:
 
         """
+
         if self.cfg.haskey('cls_loss_weight'):
             cls_loss_weight = self.cfg.cls_loss_weight
         if self.cfg.haskey('xyt_loss_weight'):
@@ -475,6 +476,7 @@ class CLRHead(nn.Module):
 
                 target_yxtl[:, 0] *= self.n_strips
                 target_yxtl[:, 2] *= 180
+
                 reg_xytl_loss = reg_xytl_loss + F.smooth_l1_loss(
                     reg_yxtl, target_yxtl,
                     reduction='none').mean()
@@ -567,5 +569,6 @@ class CLRHead(nn.Module):
             else:
                 pred = predictions
             decoded.append(pred)
+
 
         return decoded

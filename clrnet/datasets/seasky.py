@@ -15,21 +15,21 @@ LIST_FILE = {
     'test': 'list/test.txt',
 }
 
-CATEGORYS = {
-    'normal': 'list/test_split/test0_normal.txt',
-    'crowd': 'list/test_split/test1_crowd.txt',
-    'hlight': 'list/test_split/test2_hlight.txt',
-    'shadow': 'list/test_split/test3_shadow.txt',
-    'noline': 'list/test_split/test4_noline.txt',
-    'arrow': 'list/test_split/test5_arrow.txt',
-    'curve': 'list/test_split/test6_curve.txt',
-    'cross': 'list/test_split/test7_cross.txt',
-    'night': 'list/test_split/test8_night.txt',
-}
+# CATEGORYS = {
+#     'normal': 'list/test_split/test0_normal.txt',
+#     'crowd': 'list/test_split/test1_crowd.txt',
+#     'hlight': 'list/test_split/test2_hlight.txt',
+#     'shadow': 'list/test_split/test3_shadow.txt',
+#     'noline': 'list/test_split/test4_noline.txt',
+#     'arrow': 'list/test_split/test5_arrow.txt',
+#     'curve': 'list/test_split/test6_curve.txt',
+#     'cross': 'list/test_split/test7_cross.txt',
+#     'night': 'list/test_split/test8_night.txt',
+# }
 
 
 @DATASETS.register_module
-class CULane(BaseDataset):
+class SeaSky(BaseDataset):
     def __init__(self, data_root, split, processes=None, cfg=None):
         super().__init__(data_root, split, processes=processes, cfg=cfg)
         self.list_path = osp.join(data_root, LIST_FILE[split])
@@ -37,10 +37,10 @@ class CULane(BaseDataset):
         self.load_annotations()
 
     def load_annotations(self):
-        self.logger.info('Loading CULane annotations...')
+        self.logger.info('Loading SeaSky annotations...')
         # Waiting for the dataset to load is tedious, let's cache it
         os.makedirs('cache', exist_ok=True)
-        cache_path = 'cache/culane_{}.pkl'.format(self.split)
+        cache_path = 'cache/seasky_{}.pkl'.format(self.split)
         if os.path.exists(cache_path):
             with open(cache_path, 'rb') as cache_file:
                 self.data_infos = pkl.load(cache_file)
@@ -93,7 +93,7 @@ class CULane(BaseDataset):
 
         if len(line) > 2:
             exist_list = [int(l) for l in line[2:]]
-            infos['lane_exist'] = np.array(exist_list)   # (4, )
+            infos['lane_exist'] = np.array(exist_list)   # (2, )
 
         # remove sufix jpg and add lines.txt
         anno_path = img_path[:-3] + 'lines.txt'     # 注释文件的绝对路径
@@ -117,7 +117,7 @@ class CULane(BaseDataset):
         return infos
 
     def get_prediction_string(self, pred):
-        ys = np.arange(270, 590, 8) / self.cfg.ori_img_h
+        ys = np.arange(500, 1080, 10) / self.cfg.ori_img_h
         out = []
         for lane in pred:
             xs = lane(ys)
@@ -150,17 +150,18 @@ class CULane(BaseDataset):
                       'w') as out_file:
                 out_file.write(output)
 
-        for cate, cate_file in CATEGORYS.items():
-            result = culane_metric.eval_predictions(output_basedir,
-                                                    self.data_root,
-                                                    os.path.join(self.data_root, cate_file),
-                                                    iou_thresholds=[0.5],
-                                                    official=True)
+        # for cate, cate_file in CATEGORYS.items():
+        #     result = culane_metric.eval_predictions(output_basedir,
+        #                                             self.data_root,
+        #                                             os.path.join(self.data_root, cate_file),
+        #                                             iou_thresholds=[0.5],
+        #                                             official=True)
 
         result = culane_metric.eval_predictions(output_basedir,
                                                 self.data_root,
                                                 self.list_path,
                                                 iou_thresholds=np.linspace(0.5, 0.95, 10),
-                                                official=True)
+                                                official=True,
+                                                img_shape=(1080, 1920, 3))
 
         return result[0.5]['F1']

@@ -125,6 +125,9 @@ def focal_loss(input: torch.Tensor,
     focal = -alpha * weight * torch.log(input_soft)
     loss_tmp = torch.sum(target_one_hot * focal, dim=1)
 
+    # weight = torch.pow(-torch.gather(input_soft, index=target.unsqueeze(1), dim=1) + 1., gamma).squeeze()
+    # loss_tmp = alpha * weight * F.cross_entropy(input, target)
+
     if reduction == 'none':
         loss = loss_tmp
     elif reduction == 'mean':

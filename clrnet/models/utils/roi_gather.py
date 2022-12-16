@@ -55,8 +55,15 @@ class ROIGather(nn.Module):
                       stride=1,
                       padding=0,
                       groups=num_priors),
+
+            # nn.Conv1d(in_channels=self.in_channels,
+            #           out_channels=self.in_channels,
+            #           kernel_size=1,
+            #           stride=1,
+            #           padding=0),
             nn.ReLU(),
         )
+
         self.f_value = nn.Conv2d(in_channels=self.in_channels,
                                  out_channels=self.in_channels,
                                  kernel_size=1,
@@ -132,8 +139,10 @@ class ROIGather(nn.Module):
         roi = roi.view(bs, self.num_priors, -1)
 
         query = roi     # (B, num_priors, C)
-        # (B, num_priors, C) --> (B, num_priors, C)
+        # # (B, num_priors, C) --> (B, num_priors, C)
         query = self.f_query(query)
+
+        # query = self.f_query(query.permute(0, 2, 1)).permute(0, 2, 1)
         # (B, C, fH, fW) --> (B, C, fH, fW) --> (B, C, 10*25)
         value = self.resize(self.f_value(x))
         # (B, C, fH, fW) --> (B, C, fH, fW) --> (B, C, 10*25)

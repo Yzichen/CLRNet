@@ -98,3 +98,4 @@ class TuSimple(BaseDataset):
                                                 self.cfg.test_json_file)
         self.logger.info(result)
         return acc
+

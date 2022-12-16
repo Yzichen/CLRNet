@@ -37,7 +37,7 @@ COLORS = [
 ]
 
 
-def imshow_lanes(img, lanes, show=False, out_file=None, width=4):
+def imshow_lanes(img, lanes, show=False, out_file=None, width=4, return_img=False):
     lanes_xys = []
     for _, lane in enumerate(lanes):
         xys = []
@@ -53,7 +53,6 @@ def imshow_lanes(img, lanes, show=False, out_file=None, width=4):
         for i in range(1, len(xys)):
             cv2.line(img, xys[i - 1], xys[i], COLORS[idx], thickness=width)
 
-
     if show:
         cv2.imshow('view', img)
         cv2.waitKey(0)
@@ -62,3 +61,6 @@ def imshow_lanes(img, lanes, show=False, out_file=None, width=4):
         if not osp.exists(osp.dirname(out_file)):
             os.makedirs(osp.dirname(out_file))
         cv2.imwrite(out_file, img)
+
+    if return_img:
+        return img

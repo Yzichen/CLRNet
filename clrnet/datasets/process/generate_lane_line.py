@@ -110,7 +110,7 @@ class GenerateLaneLine(object):
 
         # removing lanes with less than 2 points
         old_lanes = filter(lambda x: len(x) > 1, old_lanes)
-        # sort lane points by Y (bottom to top of the image)
+        # sort lane points by Y (bottom to top of the image)    # 图像底部-->顶部
         old_lanes = [sorted(lane, key=lambda x: -x[1]) for lane in old_lanes]
         # remove points with same Y (keep first occurrence)
         old_lanes = [self.filter_lane(lane) for lane in old_lanes]
@@ -178,9 +178,12 @@ class GenerateLaneLine(object):
 
     def __call__(self, sample):
         img_org = sample['img']
-        line_strings_org = self.lane_to_linestrings(sample['lanes'])
-        line_strings_org = LineStringsOnImage(line_strings_org,
-                                              shape=img_org.shape)
+        if sample.get('lanes', None) is not None:
+            line_strings_org = self.lane_to_linestrings(sample['lanes'])
+            line_strings_org = LineStringsOnImage(line_strings_org,
+                                                  shape=img_org.shape)
+        else:
+            line_strings_org = None
 
         for i in range(30):
             if self.training:
@@ -224,10 +227,37 @@ class GenerateLaneLine(object):
                         'Transform annotation failed 30 times :(')
                     exit()
 
+        # for vis
+        # import cv2
+        # img_copy = img.copy()
+        # lanes = annos['label']
+        # for lane in lanes:
+        #     # lane: (bg, fg, start_y, start_x, theta, length, coordinates(S))
+        #     if lane[1]:
+        #         start_y = int(lane[2] * self.n_strips)
+        #         length = lane[5]
+        #         end_y = int(start_y + length - 1)
+        #         assert end_y <= self.num_points
+        #
+        #         xs = lane[-self.num_points:]
+        #         print(len(xs))
+        #         valid_ys = self.offsets_ys[start_y:end_y]
+        #         valid_xs = xs[start_y:end_y]
+        #         for i in range(1, len(valid_ys)):
+        #             print(i)
+        #             print((round(valid_xs[i-1]), round(valid_ys[i-1])))
+        #             print((round(valid_xs[i]), round(valid_ys[i])))
+        #             cv2.line(img_copy, (round(valid_xs[i-1]), round(valid_ys[i-1])),
+        #                      (round(valid_xs[i]), round(valid_ys[i])), (255, 0, 0), thickness=5)
+        # cv2.imshow("line", img_copy)
+        # cv2.waitKey(0)
+
+
         sample['img'] = img.astype(np.float32) / 255.
         sample['lane_line'] = label
         sample['lanes_endpoints'] = lane_endpoints
         sample['gt_points'] = new_anno['lanes']
+
         sample['seg'] = seg.get_arr() if self.training else np.zeros(
             img_org.shape)
 

@@ -74,7 +74,7 @@ def dynamic_k_assign(cost, pair_wise_ious):
     del topk_ious, dynamic_ks, pos_idx
 
     # 此时, 每个gt_lane对应dynamic_ks个priors，但可能存在一个prior对应多个gt_lanes.
-    # 接下来, 强制每个prior只对应一个gt_lane, 这个gt_lane与prior的line iou最小.
+    # 接下来, 强制每个prior只对应一个gt_lane, 这个gt_lane与prior的cost最小.
     matched_gt = matching_matrix.sum(1)     # (num_priors, )
     if (matched_gt > 1).sum() > 0:
         _, cost_argmin = torch.min(cost[matched_gt > 1, :], dim=1)

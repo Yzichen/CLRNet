@@ -10,7 +10,6 @@ from clrnet.utils.config import Config
 from clrnet.engine.runner import Runner
 from clrnet.datasets import build_dataloader
 
-
 def main():
     args = parse_args()
     os.environ["CUDA_VISIBLE_DEVICES"] = ','.join(

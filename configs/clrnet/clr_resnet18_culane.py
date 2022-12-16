@@ -96,7 +96,7 @@ val_process = [
     dict(type='ToTensor', keys=['img']),
 ]
 
-dataset_path = './data/CULane'
+dataset_path = '/home/zichen/Documents/Dataset/CuLane'
 dataset_type = 'CULane'
 dataset = dict(train=dict(
     type=dataset_type,
@@ -118,7 +118,7 @@ test=dict(
 ))
 
 workers = 10
-log_interval = 1000
+log_interval = 100
 # seed = 0
 num_classes = 4 + 1
 ignore_label = 255

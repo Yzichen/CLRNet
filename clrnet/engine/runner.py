@@ -88,6 +88,7 @@ class Runner(object):
                                          self.optimizer, self.scheduler,
                                          self.recorder)
         for epoch in range(start_epoch, self.cfg.epochs):
+            # print(f"{epoch}/{self.cfg.epochs}")
             self.recorder.epoch = epoch
             self.train_epoch(epoch, train_loader)
             if (epoch +

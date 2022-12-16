@@ -139,13 +139,14 @@ def eval_predictions(pred_dir,
                      iou_thresholds=[0.5],
                      width=30,
                      official=True,
-                     sequential=False):
+                     sequential=False,
+                     img_shape=(590, 1640, 3)):
     import logging
     logger = logging.getLogger(__name__)
     logger.info('Calculating metric for List: {}'.format(list_path))
     predictions = load_culane_data(pred_dir, list_path)
     annotations = load_culane_data(anno_dir, list_path)
-    img_shape = (590, 1640, 3)
+    img_shape = img_shape
     if sequential:
         results = map(
             partial(culane_metric,
