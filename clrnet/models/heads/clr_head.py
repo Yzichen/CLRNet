@@ -17,6 +17,7 @@ from clrnet.models.utils.seg_decoder import SegDecoder
 from clrnet.models.utils.dynamic_assign import assign
 from clrnet.models.losses.lineiou_loss import liou_loss
 from ..registry import HEADS
+# from ..utils.grid_sample import bilinear_grid_sample    # for onnx
 
 
 @HEADS.register_module
@@ -126,6 +127,10 @@ class CLRHead(nn.Module):
         # (B, C, num_priors, N_sample) --> (B, num_priors, C, N_sample)
         feature = F.grid_sample(batch_features, grid,
                                 align_corners=True).permute(0, 2, 1, 3)
+
+        # for onnx
+        # feature = bilinear_grid_sample(batch_features, grid,
+        #                          align_corners=True).permute(0, 2, 1, 3)
 
         # (B*num_priors, C, N_sample, 1)
         feature = feature.reshape(batch_size * num_priors,
